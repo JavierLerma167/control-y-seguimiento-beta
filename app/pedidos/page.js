@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFirebase } from '../providers/FirebaseProvider';
 import Link from 'next/link';
+import * as XLSX from 'xlsx';
 
 export default function PlanillaFotosPage() {
   const router = useRouter();
@@ -497,6 +498,233 @@ export default function PlanillaFotosPage() {
     return resultados;
   }, [instituciones, busqueda]);
 
+  // --- FUNCIONES DE EXPORTACIÓN A EXCEL ---
+  const exportarAExcel = () => {
+    try {
+      const workbook = XLSX.utils.book_new();
+      
+      // 1. Hoja: Resumen Global
+      const resumenData = [
+        ['RESUMEN GLOBAL'],
+        ['Fecha de exportación:', new Date().toLocaleString()],
+        ['Total Proyectado', `$${totalGlobal.toLocaleString()}`],
+        ['Total Anticipos', `$${totalAnticipos.toLocaleString()}`],
+        ['Saldo Pendiente', `$${totalSaldo.toLocaleString()}`],
+        ['Total Clientes', todosLosRegistros.length],
+        ['Total Entregados', totalEntregados],
+        ['Eficiencia Global', `${todosLosRegistros.length > 0 ? Math.round((totalEntregados / todosLosRegistros.length) * 100) : 0}%`],
+        [],
+        ['TOTALES POR INSTITUCIÓN'],
+        ['Institución', 'Total Proyectado', 'Anticipos', 'Saldo Pendiente', 'Clientes', 'Entregados', 'Eficiencia']
+      ];
+      
+      totalesPorInstitucion.forEach(inst => {
+        resumenData.push([
+          inst.nombre,
+          `$${inst.total.toLocaleString()}`,
+          `$${inst.anticipos.toLocaleString()}`,
+          `$${inst.saldo.toLocaleString()}`,
+          inst.totalClientes,
+          inst.entregados,
+          `${inst.totalClientes > 0 ? Math.round((inst.entregados / inst.totalClientes) * 100) : 0}%`
+        ]);
+      });
+      
+      const resumenSheet = XLSX.utils.aoa_to_sheet(resumenData);
+      resumenSheet['!cols'] = [{wch:30}, {wch:20}, {wch:20}, {wch:20}, {wch:15}, {wch:15}, {wch:15}];
+      XLSX.utils.book_append_sheet(workbook, resumenSheet, 'Resumen Global');
+      
+      // 2. Hoja por cada institución con sus grupos y clientes
+      instituciones.forEach(inst => {
+        const sheetData = [];
+        
+        // Encabezado de la institución
+        sheetData.push([`INSTITUCIÓN: ${inst.nombre}`]);
+        sheetData.push(['Director:', inst.director || '']);
+        sheetData.push(['Fecha:', inst.fecha || '']);
+        sheetData.push([]);
+        
+        // Totales de la institución
+        const instTotales = calcularTotalesInstitucion(inst);
+        sheetData.push(['TOTALES DE LA INSTITUCIÓN']);
+        sheetData.push(['Total Proyectado:', `$${instTotales.total.toLocaleString()}`]);
+        sheetData.push(['Anticipos:', `$${instTotales.anticipos.toLocaleString()}`]);
+        sheetData.push(['Saldo Pendiente:', `$${instTotales.saldo.toLocaleString()}`]);
+        sheetData.push(['Total Clientes:', instTotales.totalClientes]);
+        sheetData.push(['Entregados:', instTotales.entregados]);
+        sheetData.push([]);
+        
+        // Recorrer grupos
+        inst.grupos?.forEach(grupo => {
+          sheetData.push([`=== GRUPO: ${grupo.nombre} ===`]);
+          if (grupo.notas) {
+            sheetData.push(['Notas del grupo:', grupo.notas]);
+          }
+          sheetData.push([]);
+          
+          // Totales del grupo
+          const grupoTotales = calcularTotalesGrupo(grupo);
+          sheetData.push(['TOTALES DEL GRUPO']);
+          sheetData.push(['Total Proyectado:', `$${grupoTotales.total.toLocaleString()}`]);
+          sheetData.push(['Anticipos:', `$${grupoTotales.anticipos.toLocaleString()}`]);
+          sheetData.push(['Saldo Pendiente:', `$${grupoTotales.saldo.toLocaleString()}`]);
+          sheetData.push(['Clientes:', grupoTotales.totalClientes]);
+          sheetData.push(['Entregados:', grupoTotales.entregados]);
+          sheetData.push([]);
+          
+          // Encabezados de clientes
+          sheetData.push([
+            'CLIENTE', 
+            'PAQUETE', 
+            'PAQUETE PERSONALIZADO',
+            'TAMAÑO PAQUETE', 
+            'TAMAÑO PERSONALIZADO',
+            'CANTIDAD', 
+            'COSTO UNITARIO', 
+            'SUBTOTAL PAQUETE',
+            'EXTRAS (Tamaño/Cant/Precio/Subtotal)', 
+            'TOTAL', 
+            'ANTICIPO', 
+            'SALDO', 
+            'TOMA', 
+            'EDICIÓN', 
+            'IMPRESIÓN', 
+            'EMPAQUETADO', 
+            'ENTREGADO', 
+            'PAGADO COMPLETO'
+          ]);
+          
+          // Datos de clientes
+          grupo.registros?.forEach(reg => {
+            const { granTotal, totalPaquetes, saldoPendiente } = calcularTotales(reg);
+            
+            // Formatear extras como string
+            const extrasStr = reg.extras?.map(e => {
+              const subtotal = (Number(e.cant) || 0) * (Number(e.precio) || 0);
+              const tamStr = e.tam === 'Otro' ? (e.tamPersonalizado || 'Otro') : e.tam;
+              return `${tamStr} x${e.cant} @$${e.precio}=$${subtotal}`;
+            }).join('; ') || '';
+            
+            // Personalización de paquete
+            const paqueteMostrar = reg.paquete === 'Otro' ? (reg.paquetePersonalizado || 'Otro') : reg.paquete;
+            const tamMostrar = reg.tamPaquete === 'Otro' ? (reg.tamPaquetePersonalizado || 'Otro') : reg.tamPaquete;
+            
+            sheetData.push([
+              reg.cliente || '',
+              reg.paquete || '',
+              reg.paquetePersonalizado || '',
+              reg.tamPaquete || '',
+              reg.tamPaquetePersonalizado || '',
+              reg.cantPaquetes || 0,
+              reg.costoPaquete || 0,
+              totalPaquetes,
+              extrasStr,
+              granTotal,
+              reg.anticipo || 0,
+              saldoPendiente,
+              reg.toma ? 'Sí' : 'No',
+              reg.edicion ? 'Sí' : 'No',
+              reg.impreso ? 'Sí' : 'No',
+              reg.empaquetado ? 'Sí' : 'No',
+              reg.entregado ? 'Sí' : 'No',
+              reg.pagadoCompleto ? 'Sí' : 'No'
+            ]);
+          });
+          
+          sheetData.push([]); // Espacio entre grupos
+        });
+        
+        const sheetName = inst.nombre.replace(/[\\/*?:[\]]/g, '').substring(0, 31);
+        const sheet = XLSX.utils.aoa_to_sheet(sheetData);
+        sheet['!cols'] = [
+          {wch:25}, {wch:20}, {wch:25}, {wch:15}, {wch:20},
+          {wch:10}, {wch:15}, {wch:15}, {wch:50}, {wch:15},
+          {wch:15}, {wch:15}, {wch:10}, {wch:10}, {wch:10}, 
+          {wch:10}, {wch:10}, {wch:15}
+        ];
+        XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+      });
+      
+      // 3. Hoja con todos los clientes (vista maestra)
+      const todosClientesData = [
+        ['LISTA MAESTRA DE CLIENTES'],
+        ['Fecha de exportación:', new Date().toLocaleString()],
+        [],
+        ['Institución', 'Grupo', 'Cliente', 'Paquete', 'Tamaño', 'Cantidad', 'Total', 'Anticipo', 'Saldo', 'Entregado', 'Pagado']
+      ];
+      
+      instituciones.forEach(inst => {
+        inst.grupos?.forEach(grupo => {
+          grupo.registros?.forEach(reg => {
+            const { granTotal, saldoPendiente } = calcularTotales(reg);
+            todosClientesData.push([
+              inst.nombre,
+              grupo.nombre,
+              reg.cliente || '',
+              reg.paquete === 'Otro' ? (reg.paquetePersonalizado || 'Otro') : reg.paquete,
+              reg.tamPaquete === 'Otro' ? (reg.tamPaquetePersonalizado || 'Otro') : reg.tamPaquete,
+              reg.cantPaquetes || 0,
+              granTotal,
+              reg.anticipo || 0,
+              saldoPendiente,
+              reg.entregado ? 'Sí' : 'No',
+              reg.pagadoCompleto ? 'Sí' : 'No'
+            ]);
+          });
+        });
+      });
+      
+      const maestraSheet = XLSX.utils.aoa_to_sheet(todosClientesData);
+      maestraSheet['!cols'] = [{wch:25}, {wch:20}, {wch:25}, {wch:20}, {wch:15}, {wch:10}, {wch:15}, {wch:15}, {wch:15}, {wch:12}, {wch:12}];
+      XLSX.utils.book_append_sheet(workbook, maestraSheet, 'Lista Maestra');
+      
+      // 4. Hoja con producción por empleado
+      const produccionData = [
+        ['PRODUCCIÓN POR EMPLEADO'],
+        ['Fecha de exportación:', new Date().toLocaleString()],
+        [],
+        ['Empleado', 'Toma', 'Edición', 'Impresión', 'Empaque', 'Total Tareas']
+      ];
+      
+      const produccionPorEmpleado = {};
+      todosLosRegistros.forEach(reg => {
+        const pasos = ['toma', 'edicion', 'impreso', 'empaquetado'];
+        pasos.forEach(paso => {
+          if (reg[paso] && reg[`resp_${paso}`]) {
+            if (!produccionPorEmpleado[reg[`resp_${paso}`]]) {
+              produccionPorEmpleado[reg[`resp_${paso}`]] = { toma: 0, edicion: 0, impreso: 0, empaquetado: 0 };
+            }
+            produccionPorEmpleado[reg[`resp_${paso}`]][paso]++;
+          }
+        });
+      });
+      
+      Object.entries(produccionPorEmpleado).forEach(([empleado, datos]) => {
+        const totalTareas = datos.toma + datos.edicion + datos.impreso + datos.empaquetado;
+        produccionData.push([
+          empleado,
+          datos.toma,
+          datos.edicion,
+          datos.impreso,
+          datos.empaquetado,
+          totalTareas
+        ]);
+      });
+      
+      const produccionSheet = XLSX.utils.aoa_to_sheet(produccionData);
+      produccionSheet['!cols'] = [{wch:25}, {wch:10}, {wch:10}, {wch:10}, {wch:10}, {wch:15}];
+      XLSX.utils.book_append_sheet(workbook, produccionSheet, 'Producción por Empleado');
+      
+      // Descargar el archivo
+      const fecha = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+      XLSX.writeFile(workbook, `planilla_control_${fecha}.xlsx`);
+      
+    } catch (error) {
+      console.error('Error al exportar a Excel:', error);
+      alert('Error al exportar los datos a Excel');
+    }
+  };
+
   // Protección de ruta
   useEffect(() => {
     if (!authCargando && !usuario) {
@@ -551,6 +779,14 @@ export default function PlanillaFotosPage() {
                 />
                 <span className="absolute left-3 top-2.5 text-gray-400 text-sm">🔍</span>
               </div>
+
+              {/* Botón de Exportar a Excel */}
+              <button 
+                onClick={exportarAExcel}
+                className="bg-green-600 text-white px-4 py-2 text-sm hover:bg-green-700 transition-colors whitespace-nowrap flex items-center gap-2"
+              >
+                📊 Exportar a Excel
+              </button>
 
               {esAdmin && (
                 <button 
@@ -1066,7 +1302,7 @@ export default function PlanillaFotosPage() {
                     <th className="p-3 text-right font-medium">Clientes</th>
                     <th className="p-3 text-right font-medium">Entregados</th>
                     <th className="p-3 text-right font-medium">Eficiencia</th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody>
                   {totalesPorInstitucion.map((inst) => (
@@ -1236,4 +1472,5 @@ export default function PlanillaFotosPage() {
       </div>
     </main>
   );
+}
 }
