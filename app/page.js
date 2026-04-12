@@ -15,6 +15,9 @@ export default function Home() {
     actualizar, 
     eliminar, 
     suscribir,
+    logout,
+    signOut,
+    cerrarSesion,
     COLLECTIONS 
   } = useFirebase();
 
@@ -419,6 +422,49 @@ export default function Home() {
     }
   }, [usuario, authCargando, router]);
 
+  // Función para cerrar sesión - Versión mejorada
+  const handleLogout = async () => {
+    try {
+      // Intentar todas las posibles funciones de cierre de sesión
+      if (logout && typeof logout === 'function') {
+        await logout();
+      } else if (signOut && typeof signOut === 'function') {
+        await signOut();
+      } else if (cerrarSesion && typeof cerrarSesion === 'function') {
+        await cerrarSesion();
+      }
+      
+      // Limpiar todas las claves de localStorage relacionadas con la sesión
+      localStorage.removeItem('session_active');
+      localStorage.removeItem('user_data');
+      localStorage.removeItem('registros_asistentes');
+      localStorage.removeItem('planilla_fotografica_v4');
+      
+      // Limpiar cualquier otra clave de Firebase que pueda existir
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('firebase') || key.includes('auth'))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+      
+      // Limpiar sessionStorage
+      sessionStorage.clear();
+      
+      // Redirigir al login con recarga completa
+      window.location.href = '/auth';
+      
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error);
+      // Fallback: limpiar todo y redirigir
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = '/auth';
+    }
+  };
+
   if (authCargando || !cargado) {
     return (
       <main className="min-h-screen bg-white p-4 sm:p-6 md:p-12">
@@ -452,14 +498,22 @@ export default function Home() {
             </div>
           </div>
           
-          <div className="w-full md:w-96">
-            <input 
-              type="text" 
-              placeholder="Buscar en todos los módulos..." 
-              className="w-full border border-gray-200 px-3 py-1.5 sm:py-2 text-xs sm:text-sm focus:border-gray-400 outline-none"
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-            />
+          <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+            <div className="w-full md:w-64">
+              <input 
+                type="text" 
+                placeholder="Buscar en todos los módulos..." 
+                className="w-full border border-gray-200 px-3 py-1.5 sm:py-2 text-xs sm:text-sm focus:border-gray-400 outline-none"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+              />
+            </div>
+            <button
+              onClick={handleLogout}
+              className="border border-gray-200 px-3 py-1.5 sm:py-2 text-xs sm:text-sm hover:bg-gray-50 transition-colors whitespace-nowrap"
+            >
+              Cerrar sesión
+            </button>
           </div>
         </header>
 
@@ -950,6 +1004,27 @@ export default function Home() {
                 <option value="otros">Otros</option>
               </select>
               <button type="submit" className="w-full bg-gray-900 text-white py-2">Registrar Gasto</button>
+            </form>
+          </ModalForm>
+        )}
+
+        {/* Modal de Edición de Tarea */}
+        {modalActivo === 'editarTarea' && (
+          <ModalForm title="Editar Tarea" onClose={() => setModalActivo(null)}>
+            <form onSubmit={guardarEdicionTarea} className="space-y-4">
+              <input type="text" placeholder="Título *" required className="w-full border p-2 text-sm"
+                value={formTarea.titulo} onChange={(e) => setFormTarea({...formTarea, titulo: e.target.value})} />
+              <textarea placeholder="Descripción" className="w-full border p-2 text-sm"
+                value={formTarea.descripcion} onChange={(e) => setFormTarea({...formTarea, descripcion: e.target.value})} rows={2} />
+              <input type="text" placeholder="Asignado a (ID de empleado) *" required className="w-full border p-2 text-sm"
+                value={formTarea.asignadoA} onChange={(e) => setFormTarea({...formTarea, asignadoA: e.target.value})} />
+              <select className="w-full border p-2 text-sm"
+                value={formTarea.prioridad} onChange={(e) => setFormTarea({...formTarea, prioridad: e.target.value})}>
+                <option value="baja">Baja</option>
+                <option value="media">Media</option>
+                <option value="alta">Alta</option>
+              </select>
+              <button type="submit" className="w-full bg-gray-900 text-white py-2">Guardar Cambios</button>
             </form>
           </ModalForm>
         )}
