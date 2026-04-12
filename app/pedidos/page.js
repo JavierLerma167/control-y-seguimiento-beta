@@ -1473,4 +1473,3 @@ export default function PlanillaFotosPage() {
     </main>
   );
 }
-}
